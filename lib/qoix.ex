@@ -1,18 +1,5 @@
 defmodule Qoix do
   @moduledoc """
-  Documentation for `Qoix`.
+  Qoix is an Elixir implementation of the [Quite OK Image](https://phoboslab.org/log/2021/11/qoi-fast-lossless-image-compression) format.
   """
-
-  @doc """
-  Hello world.
-
-  ## Examples
-
-      iex> Qoix.hello()
-      :world
-
-  """
-  def hello do
-    :world
-  end
 end
