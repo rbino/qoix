@@ -201,6 +201,10 @@ defmodule Qoix do
   defp map_run_8(val), do: val - 1
   defp map_run_16(val), do: val - 33
 
+  # Remove run lengths offsets to retrieve the original value
+  defp unmap_run_8(val), do: val + 1
+  defp unmap_run_16(val), do: val + 33
+
   # Check if values can be represented with the various diff ranges
   defp in_range_2?(val), do: val >= -2 and val <= 1
   defp in_range_4?(val), do: val >= -8 and val <= 7
@@ -210,4 +214,129 @@ defmodule Qoix do
   defp map_range_2(val), do: val + 2
   defp map_range_4(val), do: val + 8
   defp map_range_5(val), do: val + 16
+
+  # Remove the offset to recenter the different ranges to 0
+  defp unmap_range_2(val), do: val - 2
+  defp unmap_range_4(val), do: val - 8
+  defp unmap_range_5(val), do: val - 16
+
+  @doc """
+  Decodes a QOI image, returning an `%Image{}`.
+
+  Returns `{:ok, %Image{}}` on success, `{:error, reason}` on failure.
+  """
+  def decode(<<encoded::binary>>) do
+    # TODO: we're ignoring channels and colorspace for now
+    case encoded do
+      <<"qoif", width::32, height::32, _channels::8, _colorspace::8, chunks::binary>> ->
+        pixels =
+          chunks
+          |> decode_chunks()
+          |> IO.iodata_to_binary()
+
+        {:ok, %Image{width: width, height: height, pixels: pixels}}
+
+      _ ->
+        {:error, :invalid_qoi}
+    end
+  end
+
+  defp decode_chunks(<<chunks::bits>>) do
+    # Previous pixel is initialized to 0,0,0,255
+    prev = <<0, 0, 0, 255>>
+    # TODO: evaluate different data structures for this
+    lut = for i <- 0..63, into: %{}, do: {i, <<0::32>>}
+    acc = []
+
+    do_decode(chunks, prev, lut, acc)
+  end
+
+  # Let's decode
+
+  # Final padding, we're done, return the accumulator
+  defp do_decode(<<0, 0, 0, 0>>, _prev, _lut, acc) do
+    acc
+  end
+
+  # Index: get the pixel from the LUT
+  defp do_decode(<<@index_flag, index::6, rest::bits>>, _prev, lut, acc) do
+    pixel = Map.fetch!(lut, index)
+
+    do_decode(rest, pixel, lut, [acc | pixel])
+  end
+
+  # Run 8: repeat previous pixel
+  defp do_decode(<<@run_8_flag, count::5, rest::bits>>, prev, lut, acc) do
+    pixels = :binary.copy(prev, unmap_run_8(count))
+
+    do_decode(rest, prev, lut, [acc | pixels])
+  end
+
+  # Run 16: repeat previous pixel
+  defp do_decode(<<@run_16_flag, count::13, rest::bits>>, prev, lut, acc) do
+    pixels = :binary.copy(prev, unmap_run_16(count))
+
+    do_decode(rest, prev, lut, [acc | pixels])
+  end
+
+  # Diff 8: reconstruct pixel from previous + diff
+  defp do_decode(<<@diff_8_flag, dr::2, dg::2, db::2, rest::bits>>, prev, lut, acc) do
+    <<pr, pg, pb, pa>> = prev
+    r = pr + unmap_range_2(dr)
+    g = pg + unmap_range_2(dg)
+    b = pb + unmap_range_2(db)
+    pixel = <<r, g, b, pa>>
+
+    do_decode(rest, pixel, update_lut(lut, pixel), [acc | pixel])
+  end
+
+  # Diff 16: reconstruct pixel from previous + diff
+  defp do_decode(<<@diff_16_flag, dr::5, dg::4, db::4, rest::bits>>, prev, lut, acc) do
+    <<pr, pg, pb, pa>> = prev
+    r = pr + unmap_range_5(dr)
+    g = pg + unmap_range_4(dg)
+    b = pb + unmap_range_4(db)
+    pixel = <<r, g, b, pa>>
+
+    do_decode(rest, pixel, update_lut(lut, pixel), [acc | pixel])
+  end
+
+  # Diff 24: reconstruct pixel from previous + diff
+  defp do_decode(<<@diff_24_flag, dr::5, dg::5, db::5, da::5, rest::bits>>, prev, lut, acc) do
+    <<pr, pg, pb, pa>> = prev
+    r = pr + unmap_range_5(dr)
+    g = pg + unmap_range_5(dg)
+    b = pb + unmap_range_5(db)
+    a = pa + unmap_range_5(da)
+    pixel = <<r, g, b, a>>
+
+    do_decode(rest, pixel, update_lut(lut, pixel), [acc | pixel])
+  end
+
+  # Color: take full color components from chunk or prev depending on the bit flags
+  defp do_decode(<<@color_flag, r?::1, g?::1, b?::1, a?::1, rest::bits>>, prev, lut, acc) do
+    <<pr, pg, pb, pa>> = prev
+    {rest, r} = consume_full_color_component(rest, r? == 1, pr)
+    {rest, g} = consume_full_color_component(rest, g? == 1, pg)
+    {rest, b} = consume_full_color_component(rest, b? == 1, pb)
+    {rest, a} = consume_full_color_component(rest, a? == 1, pa)
+
+    pixel = <<r, g, b, a>>
+
+    do_decode(rest, pixel, update_lut(lut, pixel), [acc | pixel])
+  end
+
+  defp update_lut(lut, <<r, g, b, a>> = pixel) do
+    lut_index = lut_index(r, g, b, a)
+
+    Map.put(lut, lut_index, pixel)
+  end
+
+  defp consume_full_color_component(<<color_value::8, rest::binary>>, true = _present, _prev) do
+    {rest, color_value}
+  end
+
+  defp consume_full_color_component(<<rest::bits>>, false = _present, prev) do
+    {rest, prev}
+  end
 end
