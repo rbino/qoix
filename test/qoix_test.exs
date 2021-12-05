@@ -44,9 +44,19 @@ defmodule QoixTest do
   end
 
   describe "decode/1" do
-    property "round trips when using after encode" do
+    property "round trips with rgba images" do
       check all {width, height, rgba_pixels} <- rgba_image_data_generator() do
         image = Image.from_rgba(width, height, rgba_pixels)
+
+        {:ok, encoded} = Qoix.encode(image)
+
+        assert {:ok, ^image} = Qoix.decode(encoded)
+      end
+    end
+
+    property "round trips with rgb images" do
+      check all {width, height, rgb_pixels} <- rgb_image_data_generator() do
+        image = Image.from_rgb(width, height, rgb_pixels)
 
         {:ok, encoded} = Qoix.encode(image)
 

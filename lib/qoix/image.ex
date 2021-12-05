@@ -3,8 +3,8 @@ defmodule Qoix.Image do
   A struct representing a raw RGBA image.
   """
 
-  @enforce_keys [:width, :height, :pixels]
-  defstruct [:width, :height, :pixels]
+  @enforce_keys [:width, :height, :pixels, :format]
+  defstruct [:width, :height, :pixels, :format]
 
   alias __MODULE__
 
@@ -19,7 +19,8 @@ defmodule Qoix.Image do
     %Image{
       width: width,
       height: height,
-      pixels: to_rgba(pixels)
+      pixels: pixels,
+      format: :rgb
     }
   end
 
@@ -34,21 +35,8 @@ defmodule Qoix.Image do
     %Image{
       width: width,
       height: height,
-      pixels: pixels
+      pixels: pixels,
+      format: :rgba
     }
-  end
-
-  defp to_rgba(pixels) do
-    pixels
-    |> to_rgba([])
-    |> IO.iodata_to_binary()
-  end
-
-  defp to_rgba(<<r::size(8), g::size(8), b::size(8), rest::binary>>, acc) do
-    to_rgba(rest, [acc | <<r, g, b, 255>>])
-  end
-
-  defp to_rgba(<<>>, acc) do
-    acc
   end
 end
