@@ -56,8 +56,8 @@ defmodule Qoix do
   defp channels(:rgb), do: 3
   defp channels(:rgba), do: 4
 
-  # TODO: just return 0 (which is sRGB) for now
-  defp colorspace(_opts), do: 0
+  # TODO: just return 1 (which is sRGB + linear alpha) for now
+  defp colorspace(_opts), do: 1
 
   defp encode_pixels(<<pixels::binary>>, format) when format == :rgb or format == :rgba do
     # Previous pixel is initialized to 0,0,0,255
