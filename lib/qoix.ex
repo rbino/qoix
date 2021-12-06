@@ -16,6 +16,7 @@ defmodule Qoix do
   @true_bit <<1::1>>
   @false_bit <<0::1>>
   @padding <<0, 0, 0, 0>>
+  @empty_lut for i <- 0..63, into: %{}, do: {i, <<0::32>>}
 
   @doc """
   Returns true if the binary appears to contain a valid QOI image.
@@ -62,7 +63,7 @@ defmodule Qoix do
     # Previous pixel is initialized to 0,0,0,255
     prev = <<0, 0, 0, 255>>
     run_length = 0
-    lut = for i <- 0..63, into: %{}, do: {i, <<0::32>>}
+    lut = @empty_lut
     acc = []
 
     do_encode(pixels, format, prev, run_length, lut, acc)
@@ -231,7 +232,7 @@ defmodule Qoix do
   defp decode_chunks(<<chunks::bits>>, format) do
     # Previous pixel is initialized to 0,0,0,255
     prev = <<0, 0, 0, 255>>
-    lut = for i <- 0..63, into: %{}, do: {i, <<0::32>>}
+    lut = @empty_lut
     acc = []
 
     do_decode(chunks, format, prev, lut, acc)
