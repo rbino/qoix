@@ -104,8 +104,9 @@ defmodule Qoix do
     pixel = <<r::8, g::8, b::8, 255::8>>
 
     {chunk, new_lut} = handle_non_running_pixel(pixel, prev, lut)
+    acc = [acc | chunk]
 
-    do_encode(rest, format, pixel, 0, new_lut, [acc | chunk])
+    do_encode(rest, format, pixel, 0, new_lut, acc)
   end
 
   # For the same reason as above, the pixel is different from the previous.
@@ -246,9 +247,9 @@ defmodule Qoix do
   # Index: get the pixel from the LUT
   defp do_decode(<<@index_tag, index::6, rest::bits>>, format, _prev, lut, acc) do
     pixel = Map.fetch!(lut, index)
-    out_pixel = maybe_drop_alpha(pixel, format)
+    acc = [acc | maybe_drop_alpha(pixel, format)]
 
-    do_decode(rest, format, pixel, lut, [acc | out_pixel])
+    do_decode(rest, format, pixel, lut, acc)
   end
 
   # Run 8: repeat previous pixel
@@ -257,7 +258,9 @@ defmodule Qoix do
       maybe_drop_alpha(prev, format)
       |> :binary.copy(unmap_run_8(count))
 
-    do_decode(rest, format, prev, lut, [acc | pixels])
+    acc = [acc | pixels]
+
+    do_decode(rest, format, prev, lut, acc)
   end
 
   # Run 16: repeat previous pixel
@@ -266,7 +269,9 @@ defmodule Qoix do
       maybe_drop_alpha(prev, format)
       |> :binary.copy(unmap_run_16(count))
 
-    do_decode(rest, format, prev, lut, [acc | pixels])
+    acc = [acc | pixels]
+
+    do_decode(rest, format, prev, lut, acc)
   end
 
   # Diff 8: reconstruct pixel from previous + diff
@@ -277,9 +282,9 @@ defmodule Qoix do
     b = pb + unmap_range_2(db)
 
     pixel = <<r, g, b, pa>>
-    out_pixel = maybe_drop_alpha(pixel, format)
+    acc = [acc | maybe_drop_alpha(pixel, format)]
 
-    do_decode(rest, format, pixel, update_lut(lut, pixel), [acc | out_pixel])
+    do_decode(rest, format, pixel, update_lut(lut, pixel), acc)
   end
 
   # Diff 16: reconstruct pixel from previous + diff
@@ -290,9 +295,9 @@ defmodule Qoix do
     b = pb + unmap_range_4(db)
 
     pixel = <<r, g, b, pa>>
-    out_pixel = maybe_drop_alpha(pixel, format)
+    acc = [acc | maybe_drop_alpha(pixel, format)]
 
-    do_decode(rest, format, pixel, update_lut(lut, pixel), [acc | out_pixel])
+    do_decode(rest, format, pixel, update_lut(lut, pixel), acc)
   end
 
   # Diff 24: reconstruct pixel from previous + diff
@@ -304,9 +309,9 @@ defmodule Qoix do
     a = pa + unmap_range_5(da)
 
     pixel = <<r, g, b, a>>
-    out_pixel = maybe_drop_alpha(pixel, format)
+    acc = [acc | maybe_drop_alpha(pixel, format)]
 
-    do_decode(rest, format, pixel, update_lut(lut, pixel), [acc | out_pixel])
+    do_decode(rest, format, pixel, update_lut(lut, pixel), acc)
   end
 
   # Color: take full color values from chunk or prev depending on the bit flags
@@ -333,9 +338,9 @@ defmodule Qoix do
     a = value_or_previous(a? == 1, maybe_a, pa)
 
     pixel = <<r, g, b, a>>
-    out_pixel = maybe_drop_alpha(pixel, format)
+    acc = [acc | maybe_drop_alpha(pixel, format)]
 
-    do_decode(rest, format, pixel, update_lut(lut, pixel), [acc | out_pixel])
+    do_decode(rest, format, pixel, update_lut(lut, pixel), acc)
   end
 
   defp maybe_drop_alpha(pixel, :rgba), do: pixel
