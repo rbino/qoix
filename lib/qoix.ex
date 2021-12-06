@@ -183,17 +183,17 @@ defmodule Qoix do
 
       # Last resort, full color
       true ->
-        {r?, r} = build_full_color_component(r, dr)
-        {g?, g} = build_full_color_component(g, dg)
-        {b?, b} = build_full_color_component(b, db)
-        {a?, a} = build_full_color_component(a, da)
+        {r?, r} = color_bit_and_value(r, dr)
+        {g?, g} = color_bit_and_value(g, dg)
+        {b?, b} = color_bit_and_value(b, db)
+        {a?, a} = color_bit_and_value(a, da)
 
         <<@color_tag::bits, r?::bits, g?::bits, b?::bits, a?::bits, r::bits, g::bits, b::bits,
           a::bits>>
     end
   end
 
-  defp build_full_color_component(color_value, color_diff) do
+  defp color_bit_and_value(color_value, color_diff) do
     if color_diff == 0 do
       {@false_bit, <<>>}
     else
