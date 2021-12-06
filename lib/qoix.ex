@@ -159,32 +159,35 @@ defmodule Qoix do
     end
   end
 
+  # Check if values can be represented with the various diff ranges
+  defguardp in_range_2?(val) when val in -2..1
+  defguardp in_range_4?(val) when val in -8..7
+  defguardp in_range_5?(val) when val in -16..15
+
   # Emit a diff or color chunk
+  defp diff_or_color(<<r::8, g::8, b::8, a::8>> = _pixel, <<pr::8, pg::8, pb::8, a::8>> = _prev)
+       when in_range_2?(r - pr) and in_range_2?(g - pg) and in_range_2?(b - pb) do
+    # Diff 8
+    <<@diff_8_tag::bits, map_range_2(r - pr)::2, map_range_2(g - pg)::2, map_range_2(b - pb)::2>>
+  end
+
+  defp diff_or_color(<<r::8, g::8, b::8, a::8>> = _pixel, <<pr::8, pg::8, pb::8, a::8>> = _prev)
+       when in_range_5?(r - pr) and in_range_4?(g - pg) and in_range_4?(b - pb) do
+    # Diff 16
+    <<@diff_16_tag::bits, map_range_5(r - pr)::5, map_range_4(g - pg)::4, map_range_4(b - pb)::4>>
+  end
+
+  defp diff_or_color(<<r::8, g::8, b::8, a::8>> = _pixel, <<pr::8, pg::8, pb::8, pa::8>> = _prev)
+       when in_range_5?(r - pr) and in_range_5?(g - pg) and in_range_5?(b - pb) and
+              in_range_5?(a - pa) do
+    # Diff 24
+    <<@diff_24_tag::bits, map_range_5(r - pr)::5, map_range_5(g - pg)::5, map_range_5(b - pb)::5,
+      map_range_5(a - pa)::5>>
+  end
+
   defp diff_or_color(<<r::8, g::8, b::8, a::8>> = _pixel, <<pr::8, pg::8, pb::8, pa::8>> = _prev) do
-    # Compute pixel differences
-    dr = r - pr
-    dg = g - pg
-    db = b - pb
-    da = a - pa
-
-    cond do
-      # Diff 8
-      da == 0 and in_range_2?(dr) and in_range_2?(dg) and in_range_2?(db) ->
-        <<@diff_8_tag::bits, map_range_2(dr)::2, map_range_2(dg)::2, map_range_2(db)::2>>
-
-      # Diff 16
-      da == 0 and in_range_5?(dr) and in_range_4?(dg) and in_range_4?(db) ->
-        <<@diff_16_tag::bits, map_range_5(dr)::5, map_range_4(dg)::4, map_range_4(db)::4>>
-
-      # Diff 24
-      in_range_5?(dr) and in_range_5?(dg) and in_range_5?(db) and in_range_5?(da) ->
-        <<@diff_24_tag::bits, map_range_5(dr)::5, map_range_5(dg)::5, map_range_5(db)::5,
-          map_range_5(da)::5>>
-
-      # Last resort, full color
-      true ->
-        build_color_chunk(r, dr, g, dg, b, db, a, da)
-    end
+    # Last resort, full color
+    build_color_chunk(r, r - pr, g, g - pg, b, b - pb, a, a - pa)
   end
 
   defp build_color_chunk(r, dr, g, dg, b, db, a, da) do
@@ -371,11 +374,6 @@ defmodule Qoix do
   # Remove run lengths offsets to retrieve the original value
   defp unmap_run_8(val), do: val + 1
   defp unmap_run_16(val), do: val + 33
-
-  # Check if values can be represented with the various diff ranges
-  defp in_range_2?(val), do: val in -2..1
-  defp in_range_4?(val), do: val in -8..7
-  defp in_range_5?(val), do: val in -16..15
 
   # Add the offset to recenter the different ranges to 0
   defp map_range_2(val), do: val + 2
