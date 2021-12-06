@@ -374,9 +374,9 @@ defmodule Qoix do
   defp unmap_run_16(val), do: val + 33
 
   # Check if values can be represented with the various diff ranges
-  defp in_range_2?(val), do: val >= -2 and val <= 1
-  defp in_range_4?(val), do: val >= -8 and val <= 7
-  defp in_range_5?(val), do: val >= -16 and val <= 15
+  defp in_range_2?(val), do: val in -2..1
+  defp in_range_4?(val), do: val in -8..7
+  defp in_range_5?(val), do: val in -16..15
 
   # Add the offset to recenter the different ranges to 0
   defp map_range_2(val), do: val + 2
