@@ -153,7 +153,7 @@ defmodule Qoix do
       _ ->
         # Either we didn't find the value or it was different from our current pixel
         chunk = diff_or_color(pixel, prev)
-        new_lut = Map.put(lut, lut_index, pixel)
+        new_lut = Map.put(lut, lut_index, <<r, g, b, a>>)
 
         {chunk, new_lut}
     end
@@ -309,13 +309,28 @@ defmodule Qoix do
     do_decode(rest, format, pixel, update_lut(lut, pixel), [acc | out_pixel])
   end
 
-  # Color: take full color components from chunk or prev depending on the bit flags
-  defp do_decode(<<@color_tag, r?::1, g?::1, b?::1, a?::1, rest::bits>>, format, prev, lut, acc) do
+  # Color: take full color values from chunk or prev depending on the bit flags
+  defp do_decode(
+         <<@color_tag, r?::1, g?::1, b?::1, a?::1, maybe_values_and_rest::bits>>,
+         format,
+         prev,
+         lut,
+         acc
+       ) do
     <<pr, pg, pb, pa>> = prev
-    {rest, r} = consume_full_color_component(rest, r? == 1, pr)
-    {rest, g} = consume_full_color_component(rest, g? == 1, pg)
-    {rest, b} = consume_full_color_component(rest, b? == 1, pb)
-    {rest, a} = consume_full_color_component(rest, a? == 1, pa)
+
+    r_size = r? * 8
+    g_size = g? * 8
+    b_size = b? * 8
+    a_size = a? * 8
+
+    <<maybe_r::size(r_size), maybe_g::size(g_size), maybe_b::size(b_size), maybe_a::size(a_size),
+      rest::bits>> = maybe_values_and_rest
+
+    r = value_or_previous(r? == 1, maybe_r, pr)
+    g = value_or_previous(g? == 1, maybe_g, pg)
+    b = value_or_previous(b? == 1, maybe_b, pb)
+    a = value_or_previous(a? == 1, maybe_a, pa)
 
     pixel = <<r, g, b, a>>
     out_pixel = maybe_drop_alpha(pixel, format)
@@ -326,13 +341,8 @@ defmodule Qoix do
   defp maybe_drop_alpha(pixel, :rgba), do: pixel
   defp maybe_drop_alpha(<<r::8, g::8, b::8, _a::8>>, :rgb), do: <<r::8, g::8, b::8>>
 
-  defp consume_full_color_component(<<color_value::8, rest::binary>>, true = _present, _prev) do
-    {rest, color_value}
-  end
-
-  defp consume_full_color_component(<<rest::bits>>, false = _present, prev) do
-    {rest, prev}
-  end
+  defp value_or_previous(true = _value_present, value, _prev), do: value
+  defp value_or_previous(false = _value_present, _value, prev), do: prev
 
   defp lut_index(r, g, b, a) do
     # XOR r, g, b and a and return the result modulo 64
@@ -343,10 +353,10 @@ defmodule Qoix do
     |> rem(64)
   end
 
-  defp update_lut(lut, <<r, g, b, a>> = pixel) do
+  defp update_lut(lut, <<r, g, b, a>>) do
     lut_index = lut_index(r, g, b, a)
 
-    Map.put(lut, lut_index, pixel)
+    Map.put(lut, lut_index, <<r, g, b, a>>)
   end
 
   # Offset run lengths to exploit all the available ranges
