@@ -13,8 +13,6 @@ defmodule Qoix do
   @diff_16_tag <<6::3>>
   @diff_24_tag <<14::4>>
   @color_tag <<15::4>>
-  @true_bit <<1::1>>
-  @false_bit <<0::1>>
   @padding <<0, 0, 0, 0>>
   @empty_lut for i <- 0..63, into: %{}, do: {i, <<0::32>>}
 
@@ -185,22 +183,23 @@ defmodule Qoix do
 
       # Last resort, full color
       true ->
-        {r?, r} = color_bit_and_value(r, dr)
-        {g?, g} = color_bit_and_value(g, dg)
-        {b?, b} = color_bit_and_value(b, db)
-        {a?, a} = color_bit_and_value(a, da)
-
-        <<@color_tag::bits, r?::bits, g?::bits, b?::bits, a?::bits, r::bits, g::bits, b::bits,
-          a::bits>>
+        build_color_chunk(r, dr, g, dg, b, db, a, da)
     end
   end
 
-  defp color_bit_and_value(color_value, color_diff) do
-    if color_diff == 0 do
-      {@false_bit, <<>>}
-    else
-      {@true_bit, <<color_value::8>>}
-    end
+  defp build_color_chunk(r, dr, g, dg, b, db, a, da) do
+    r? = if dr == 0, do: 0, else: 1
+    g? = if dg == 0, do: 0, else: 1
+    b? = if db == 0, do: 0, else: 1
+    a? = if da == 0, do: 0, else: 1
+
+    r_size = r? * 8
+    g_size = g? * 8
+    b_size = b? * 8
+    a_size = a? * 8
+
+    <<@color_tag::bits, r?::1, g?::1, b?::1, a?::1, r::size(r_size), g::size(g_size),
+      b::size(b_size), a::size(a_size)>>
   end
 
   @doc """
