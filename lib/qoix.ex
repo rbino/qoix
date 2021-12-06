@@ -148,12 +148,12 @@ defmodule Qoix do
     # XOR the values to calculate the LUT key
     lut_index = lut_index(r, g, b, a)
 
-    case Map.fetch(lut, lut_index) do
-      {:ok, <<^r::8, ^g::8, ^b::8, ^a::8>>} ->
+    case lut do
+      %{^lut_index => <<^r::8, ^g::8, ^b::8, ^a::8>>} ->
         {<<@index_tag::bits, lut_index::6>>, lut}
 
-      _ ->
-        # Either we didn't find the value or it was different from our current pixel
+      _other ->
+        # The value was different from our current pixel
         chunk = diff_or_color(pixel, prev)
         new_lut = Map.put(lut, lut_index, <<r, g, b, a>>)
 
@@ -247,7 +247,7 @@ defmodule Qoix do
 
   # Index: get the pixel from the LUT
   defp do_decode(<<@index_tag, index::6, rest::bits>>, format, _prev, lut, acc) do
-    pixel = Map.fetch!(lut, index)
+    %{^index => pixel} = lut
     acc = [acc | maybe_drop_alpha(pixel, format)]
 
     do_decode(rest, format, pixel, lut, acc)
