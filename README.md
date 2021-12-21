@@ -1,10 +1,8 @@
 # Qoix
 
-Qoix is an Elixir implementation of the [Quite OK
-Image](https://phoboslab.org/log/2021/11/qoi-fast-lossless-image-compression) format.
+Qoix is an Elixir implementation of the [Quite OK Image format](https://qoiformat.org).
 
-It implements the [current specification](https://github.com/phoboslab/qoi/issues/37) and it will
-implement the [final one](https://github.com/phoboslab/qoi/issues/48) when it's finalized.
+It is currently aligned with the [v1.0 specification](https://qoiformat.org/qoi-specification.pdf).
 
 ## Installation
 

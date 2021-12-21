@@ -1,26 +1,25 @@
 defmodule Qoix do
   @moduledoc """
-  Qoix is an Elixir implementation of the [Quite OK Image](https://phoboslab.org/log/2021/11/qoi-fast-lossless-image-compression) format.
+  Qoix is an Elixir implementation of the [Quite OK Image format](https://qoiformat.org).
   """
 
   alias Qoix.Image
   use Bitwise
 
-  @index_tag <<0::2>>
-  @run_8_tag <<2::3>>
-  @run_16_tag <<3::3>>
-  @diff_8_tag <<2::2>>
-  @diff_16_tag <<6::3>>
-  @diff_24_tag <<14::4>>
-  @color_tag <<15::4>>
-  @padding <<0, 0, 0, 0>>
+  @index_op <<0::2>>
+  @diff_op <<1::2>>
+  @luma_op <<2::2>>
+  @run_op <<3::2>>
+  @rgb_op <<254::8>>
+  @rgba_op <<255::8>>
+  @padding :binary.copy(<<0>>, 7) <> <<1>>
   @empty_lut for i <- 0..63, into: %{}, do: {i, <<0::32>>}
 
   @doc """
   Returns true if the binary appears to contain a valid QOI image.
   """
-  def qoi?(<<"qoif", _width::32, _height::32, channels::8, _colorspace::8, _rest::binary>>)
-      when channels == 3 or channels == 4 do
+  def qoi?(<<"qoif", _width::32, _height::32, channels::8, colorspace::8, _rest::binary>>)
+      when channels in [3, 4] and colorspace in [0, 1] do
     true
   end
 
@@ -33,20 +32,19 @@ defmodule Qoix do
 
   Returns `{:ok, encoded}` on success, `{:error, reason}` on failure.
   """
-  def encode(%Image{width: width, height: height, pixels: pixels, format: format}, opts \\ [])
-      when width > 0 and height > 0 and format in [:rgb, :rgba] and is_binary(pixels) do
-    channels = channels(format)
-    colorspace = colorspace(opts)
+  def encode(%Image{width: w, height: h, pixels: pixels, format: fmt, colorspace: cspace})
+      when w > 0 and h > 0 and fmt in [:rgb, :rgba] and cspace in [:srgb, :linear] and
+             is_binary(pixels) do
+    channels = channels(fmt)
+    colorspace = encode_colorspace(cspace)
 
     chunks =
       pixels
-      |> encode_pixels(format)
+      |> encode_pixels(fmt)
       |> IO.iodata_to_binary()
 
     # Return the final binary
-    data =
-      <<"qoif", width::32, height::32, channels::8, colorspace::8, chunks::binary,
-        @padding::binary>>
+    data = <<"qoif", w::32, h::32, channels::8, colorspace::8, chunks::bits, @padding::bits>>
 
     {:ok, data}
   end
@@ -54,8 +52,8 @@ defmodule Qoix do
   defp channels(:rgb), do: 3
   defp channels(:rgba), do: 4
 
-  # TODO: just return 1 (which is sRGB + linear alpha) for now
-  defp colorspace(_opts), do: 1
+  defp encode_colorspace(:srgb), do: 0
+  defp encode_colorspace(:linear), do: 1
 
   defp encode_pixels(<<pixels::binary>>, format) when format == :rgb or format == :rgba do
     # Previous pixel is initialized to 0,0,0,255
@@ -70,9 +68,8 @@ defmodule Qoix do
   # Here we go with all the possible cases. Order matters due to pattern matching.
 
   # Maximum representable run_length, push out and start a new one
-  defp do_encode(<<pixels::bits>>, format, prev, run_length, lut, acc)
-       when run_length == 0x2020 do
-    acc = [acc | <<@run_16_tag::bits, map_run_16(run_length)::13>>]
+  defp do_encode(<<pixels::bits>>, format, prev, run_length, lut, acc) when run_length == 62 do
+    acc = [acc | <<@run_op::bits, bias_run(run_length)::6>>]
 
     do_encode(pixels, format, prev, 0, lut, acc)
   end
@@ -109,19 +106,11 @@ defmodule Qoix do
   end
 
   # For the same reason as above, the pixel is different from the previous.
-  # Here we just emit the 13 bit run length and leave the pixel handling to the next recursion,
+  # Here we just emit the run length and leave the pixel handling to the next recursion,
   # that will enter in the previous head.
   defp do_encode(<<pixels::bits>>, format, prev, run_length, lut, acc)
-       when run_length > 32 do
-    acc = [acc | <<@run_16_tag::bits, map_run_16(run_length)::13>>]
-
-    do_encode(pixels, format, prev, 0, lut, acc)
-  end
-
-  # As above, but for a 5 bit run length.
-  defp do_encode(<<pixels::bits>>, format, prev, run_length, lut, acc)
        when run_length > 0 do
-    acc = [acc | <<@run_8_tag::bits, map_run_8(run_length)::5>>]
+    acc = [acc | <<@run_op::bits, bias_run(run_length)::6>>]
 
     do_encode(pixels, format, prev, 0, lut, acc)
   end
@@ -131,78 +120,62 @@ defmodule Qoix do
     acc
   end
 
-  # All pixels consumed, pending 13 bit run: output the accumulator and the 13 bit run with its tag
-  defp do_encode(<<>>, _format, _prev, run_length, _lut, acc) when run_length > 32 do
-    [acc | <<@run_16_tag::bits, map_run_16(run_length)::13>>]
-  end
-
-  # All pixels consumed, pending 5 bit run: output the accumulator and the 5 bit run with its tag
+  # All pixels consumed, pending run: output the accumulator and the 5 bit run with its tag
   defp do_encode(<<>>, _format, _prev, run_length, _lut, acc) do
-    [acc | <<@run_8_tag::bits, map_run_8(run_length)::5>>]
+    [acc | <<@run_op::bits, bias_run(run_length)::6>>]
   end
 
   # Handle a pixel that is not part of a run, return a {chunk, updated_lut} tuple
   defp handle_non_running_pixel(<<r::8, g::8, b::8, a::8>> = pixel, prev, lut) do
-    # XOR the values to calculate the LUT key
-    lut_index = lut_index(r, g, b, a)
+    index = index(r, g, b, a)
 
     case lut do
-      %{^lut_index => <<^r::8, ^g::8, ^b::8, ^a::8>>} ->
-        {<<@index_tag::bits, lut_index::6>>, lut}
+      %{^index => <<^r::8, ^g::8, ^b::8, ^a::8>>} ->
+        {<<@index_op::bits, index::6>>, lut}
 
       _other ->
         # The value was different from our current pixel
-        chunk = diff_or_color(pixel, prev)
-        new_lut = Map.put(lut, lut_index, <<r, g, b, a>>)
+        chunk = diff_luma_color(pixel, prev)
+        new_lut = Map.put(lut, index, <<r, g, b, a>>)
 
         {chunk, new_lut}
     end
   end
 
-  # Check if values can be represented with the various diff ranges
   defguardp in_range_2?(val) when val in -2..1
   defguardp in_range_4?(val) when val in -8..7
-  defguardp in_range_5?(val) when val in -16..15
+  defguardp in_range_6?(val) when val in -32..31
 
-  # Emit a diff or color chunk
-  defp diff_or_color(<<r::8, g::8, b::8, a::8>> = _pixel, <<pr::8, pg::8, pb::8, a::8>> = _prev)
-       when in_range_2?(r - pr) and in_range_2?(g - pg) and in_range_2?(b - pb) do
-    # Diff 8
-    <<@diff_8_tag::bits, map_range_2(r - pr)::2, map_range_2(g - pg)::2, map_range_2(b - pb)::2>>
+  # Check if value can be represented with diff op
+  defguardp diff_op?(dr, dg, db) when in_range_2?(dr) and in_range_2?(dg) and in_range_2?(db)
+
+  # Check if value can be represented with luma op
+  defguardp luma_op?(dr, dg, db)
+            when in_range_6?(dg) and in_range_4?(dr - dg) and in_range_4?(db - dg)
+
+  # Emit a diff, luma, rgb or rgba chunk
+  defp diff_luma_color(<<r::8, g::8, b::8, a::8>> = _pixel, <<pr::8, pg::8, pb::8, a::8>> = _prev)
+       when diff_op?(r - pr, g - pg, b - pb) do
+    <<@diff_op::bits, bias_diff(r - pr)::2, bias_diff(g - pg)::2, bias_diff(b - pb)::2>>
   end
 
-  defp diff_or_color(<<r::8, g::8, b::8, a::8>> = _pixel, <<pr::8, pg::8, pb::8, a::8>> = _prev)
-       when in_range_5?(r - pr) and in_range_4?(g - pg) and in_range_4?(b - pb) do
-    # Diff 16
-    <<@diff_16_tag::bits, map_range_5(r - pr)::5, map_range_4(g - pg)::4, map_range_4(b - pb)::4>>
+  defp diff_luma_color(<<r::8, g::8, b::8, a::8>> = _pixel, <<pr::8, pg::8, pb::8, a::8>> = _prev)
+       when luma_op?(r - pr, g - pg, b - pb) do
+    dg = g - pg
+    dr_dg = r - pr - dg
+    db_dg = b - pb - dg
+
+    <<@luma_op::bits, bias_luma_dg(dg)::6, bias_luma_dr_db(dr_dg)::4, bias_luma_dr_db(db_dg)::4>>
   end
 
-  defp diff_or_color(<<r::8, g::8, b::8, a::8>> = _pixel, <<pr::8, pg::8, pb::8, pa::8>> = _prev)
-       when in_range_5?(r - pr) and in_range_5?(g - pg) and in_range_5?(b - pb) and
-              in_range_5?(a - pa) do
-    # Diff 24
-    <<@diff_24_tag::bits, map_range_5(r - pr)::5, map_range_5(g - pg)::5, map_range_5(b - pb)::5,
-      map_range_5(a - pa)::5>>
+  defp diff_luma_color(<<r::8, g::8, b::8, a::8>>, <<_prgb::24, a::8>> = _prev) do
+    # Same alpha, emit RGB
+    <<@rgb_op, r::8, g::8, b::8>>
   end
 
-  defp diff_or_color(<<r::8, g::8, b::8, a::8>> = _pixel, <<pr::8, pg::8, pb::8, pa::8>> = _prev) do
-    # Last resort, full color
-    build_color_chunk(r, r - pr, g, g - pg, b, b - pb, a, a - pa)
-  end
-
-  defp build_color_chunk(r, dr, g, dg, b, db, a, da) do
-    r? = if dr == 0, do: 0, else: 1
-    g? = if dg == 0, do: 0, else: 1
-    b? = if db == 0, do: 0, else: 1
-    a? = if da == 0, do: 0, else: 1
-
-    r_size = r? * 8
-    g_size = g? * 8
-    b_size = b? * 8
-    a_size = a? * 8
-
-    <<@color_tag::bits, r?::1, g?::1, b?::1, a?::1, r::size(r_size), g::size(g_size),
-      b::size(b_size), a::size(a_size)>>
+  defp diff_luma_color(<<r::8, g::8, b::8, a::8>>, _prev) do
+    # Last resort, full RGBA color
+    <<@rgba_op, r::8, g::8, b::8, a::8>>
   end
 
   @doc """
@@ -211,17 +184,25 @@ defmodule Qoix do
   Returns `{:ok, %Image{}}` on success, `{:error, reason}` on failure.
   """
   def decode(<<encoded::binary>>) do
-    # TODO: we ignore colorspace for now
     case encoded do
-      <<"qoif", width::32, height::32, channels::8, _colorspace::8, chunks::binary>> ->
+      <<"qoif", width::32, height::32, channels::8, cspace::8, chunks::binary>> ->
         format = format(channels)
+        colorspace = decode_colorspace(cspace)
 
         pixels =
           chunks
           |> decode_chunks(format)
           |> IO.iodata_to_binary()
 
-        {:ok, %Image{width: width, height: height, pixels: pixels, format: format}}
+        image = %Image{
+          width: width,
+          height: height,
+          pixels: pixels,
+          format: format,
+          colorspace: colorspace
+        }
+
+        {:ok, image}
 
       _ ->
         {:error, :invalid_qoi}
@@ -230,6 +211,9 @@ defmodule Qoix do
 
   defp format(3), do: :rgb
   defp format(4), do: :rgba
+
+  defp decode_colorspace(0), do: :srgb
+  defp decode_colorspace(1), do: :linear
 
   defp decode_chunks(<<chunks::bits>>, format) do
     # Previous pixel is initialized to 0,0,0,255
@@ -240,49 +224,56 @@ defmodule Qoix do
     do_decode(chunks, format, prev, lut, acc)
   end
 
-  # Let's decode
+  # Let's decode, order matters since 8 bit opcodes have predence over 2 bit opcodes
 
   # Final padding, we're done, return the accumulator
   defp do_decode(@padding, _format, _prev, _lut, acc) do
     acc
   end
 
+  # RGB: take just alpha from previous pixel
+  defp do_decode(<<@rgb_op, r::8, g::8, b::8, rest::bits>>, format, prev, lut, acc) do
+    <<_prgb::24, pa::8>> = prev
+
+    pixel = <<r, g, b, pa>>
+    acc = [acc | maybe_drop_alpha(pixel, format)]
+
+    do_decode(rest, format, pixel, update_lut(lut, pixel), acc)
+  end
+
+  # RGBA: pixel encoded with full information
+  defp do_decode(<<@rgba_op, r::8, g::8, b::8, a::8, rest::bits>>, format, _prev, lut, acc) do
+    pixel = <<r, g, b, a>>
+    acc = [acc | maybe_drop_alpha(pixel, format)]
+
+    do_decode(rest, format, pixel, update_lut(lut, pixel), acc)
+  end
+
   # Index: get the pixel from the LUT
-  defp do_decode(<<@index_tag, index::6, rest::bits>>, format, _prev, lut, acc) do
+  defp do_decode(<<@index_op, index::6, rest::bits>>, format, _prev, lut, acc) do
     %{^index => pixel} = lut
     acc = [acc | maybe_drop_alpha(pixel, format)]
 
     do_decode(rest, format, pixel, lut, acc)
   end
 
-  # Run 8: repeat previous pixel
-  defp do_decode(<<@run_8_tag, count::5, rest::bits>>, format, prev, lut, acc) do
+  # Run: repeat previous pixel
+  defp do_decode(<<@run_op, count::6, rest::bits>>, format, prev, lut, acc) do
     pixels =
       maybe_drop_alpha(prev, format)
-      |> :binary.copy(unmap_run_8(count))
+      |> :binary.copy(unbias_run(count))
 
     acc = [acc | pixels]
 
     do_decode(rest, format, prev, lut, acc)
   end
 
-  # Run 16: repeat previous pixel
-  defp do_decode(<<@run_16_tag, count::13, rest::bits>>, format, prev, lut, acc) do
-    pixels =
-      maybe_drop_alpha(prev, format)
-      |> :binary.copy(unmap_run_16(count))
-
-    acc = [acc | pixels]
-
-    do_decode(rest, format, prev, lut, acc)
-  end
-
-  # Diff 8: reconstruct pixel from previous + diff
-  defp do_decode(<<@diff_8_tag, dr::2, dg::2, db::2, rest::bits>>, format, prev, lut, acc) do
+  # Diff: reconstruct pixel from previous + diff
+  defp do_decode(<<@diff_op, dr::2, dg::2, db::2, rest::bits>>, format, prev, lut, acc) do
     <<pr, pg, pb, pa>> = prev
-    r = pr + unmap_range_2(dr)
-    g = pg + unmap_range_2(dg)
-    b = pb + unmap_range_2(db)
+    r = pr + unbias_diff(dr)
+    g = pg + unbias_diff(dg)
+    b = pb + unbias_diff(db)
 
     pixel = <<r, g, b, pa>>
     acc = [acc | maybe_drop_alpha(pixel, format)]
@@ -290,57 +281,15 @@ defmodule Qoix do
     do_decode(rest, format, pixel, update_lut(lut, pixel), acc)
   end
 
-  # Diff 16: reconstruct pixel from previous + diff
-  defp do_decode(<<@diff_16_tag, dr::5, dg::4, db::4, rest::bits>>, format, prev, lut, acc) do
+  # Luma: reconstruct pixel from previous + diff
+  defp do_decode(<<@luma_op, b_dg::6, dr_dg::4, db_dg::4, rest::bits>>, format, prev, lut, acc) do
     <<pr, pg, pb, pa>> = prev
-    r = pr + unmap_range_5(dr)
-    g = pg + unmap_range_4(dg)
-    b = pb + unmap_range_4(db)
+    dg = unbias_luma_dg(b_dg)
+    r = pr + unbias_luma_dr_db(dr_dg) + dg
+    g = pg + dg
+    b = pb + unbias_luma_dr_db(db_dg) + dg
 
     pixel = <<r, g, b, pa>>
-    acc = [acc | maybe_drop_alpha(pixel, format)]
-
-    do_decode(rest, format, pixel, update_lut(lut, pixel), acc)
-  end
-
-  # Diff 24: reconstruct pixel from previous + diff
-  defp do_decode(<<@diff_24_tag, dr::5, dg::5, db::5, da::5, rest::bits>>, format, prev, lut, acc) do
-    <<pr, pg, pb, pa>> = prev
-    r = pr + unmap_range_5(dr)
-    g = pg + unmap_range_5(dg)
-    b = pb + unmap_range_5(db)
-    a = pa + unmap_range_5(da)
-
-    pixel = <<r, g, b, a>>
-    acc = [acc | maybe_drop_alpha(pixel, format)]
-
-    do_decode(rest, format, pixel, update_lut(lut, pixel), acc)
-  end
-
-  # Color: take full color values from chunk or prev depending on the bit flags
-  defp do_decode(
-         <<@color_tag, r?::1, g?::1, b?::1, a?::1, maybe_values_and_rest::bits>>,
-         format,
-         prev,
-         lut,
-         acc
-       ) do
-    <<pr, pg, pb, pa>> = prev
-
-    r_size = r? * 8
-    g_size = g? * 8
-    b_size = b? * 8
-    a_size = a? * 8
-
-    <<maybe_r::size(r_size), maybe_g::size(g_size), maybe_b::size(b_size), maybe_a::size(a_size),
-      rest::bits>> = maybe_values_and_rest
-
-    r = value_or_previous(r? == 1, maybe_r, pr)
-    g = value_or_previous(g? == 1, maybe_g, pg)
-    b = value_or_previous(b? == 1, maybe_b, pb)
-    a = value_or_previous(a? == 1, maybe_a, pa)
-
-    pixel = <<r, g, b, a>>
     acc = [acc | maybe_drop_alpha(pixel, format)]
 
     do_decode(rest, format, pixel, update_lut(lut, pixel), acc)
@@ -349,39 +298,26 @@ defmodule Qoix do
   defp maybe_drop_alpha(pixel, :rgba), do: pixel
   defp maybe_drop_alpha(<<r::8, g::8, b::8, _a::8>>, :rgb), do: <<r::8, g::8, b::8>>
 
-  defp value_or_previous(true = _value_present, value, _prev), do: value
-  defp value_or_previous(false = _value_present, _value, prev), do: prev
-
-  defp lut_index(r, g, b, a) do
-    # XOR r, g, b and a and return the result modulo 64
-    r
-    |> bxor(g)
-    |> bxor(b)
-    |> bxor(a)
+  defp index(r, g, b, a) do
+    (r * 3 + g * 5 + b * 7 + a * 11)
     |> rem(64)
   end
 
   defp update_lut(lut, <<r, g, b, a>>) do
-    lut_index = lut_index(r, g, b, a)
+    lut_index = index(r, g, b, a)
 
     Map.put(lut, lut_index, <<r, g, b, a>>)
   end
 
-  # Offset run lengths to exploit all the available ranges
-  defp map_run_8(val), do: val - 1
-  defp map_run_16(val), do: val - 33
+  defp bias_run(val), do: val - 1
+  defp unbias_run(val), do: val + 1
 
-  # Remove run lengths offsets to retrieve the original value
-  defp unmap_run_8(val), do: val + 1
-  defp unmap_run_16(val), do: val + 33
+  defp bias_diff(val), do: val + 2
+  defp unbias_diff(val), do: val - 2
 
-  # Add the offset to recenter the different ranges to 0
-  defp map_range_2(val), do: val + 2
-  defp map_range_4(val), do: val + 8
-  defp map_range_5(val), do: val + 16
+  defp bias_luma_dg(val), do: val + 32
+  defp unbias_luma_dg(val), do: val - 32
 
-  # Remove the offset to recenter the different ranges to 0
-  defp unmap_range_2(val), do: val - 2
-  defp unmap_range_4(val), do: val - 8
-  defp unmap_range_5(val), do: val - 16
+  defp bias_luma_dr_db(val), do: val + 8
+  defp unbias_luma_dr_db(val), do: val - 8
 end
