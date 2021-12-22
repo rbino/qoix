@@ -26,7 +26,8 @@ defmodule Qoix.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:stream_data, "~> 0.5", only: [:dev, :test]}
+      {:stream_data, "~> 0.5", only: [:dev, :test]},
+      {:ex_doc, "~> 0.24", only: :dev, runtime: false}
     ]
   end
 end
