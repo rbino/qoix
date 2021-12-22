@@ -22,8 +22,8 @@ defmodule QoixTest do
                  encoded
 
         assert channels == 4
-        padding_start = byte_size(data) - 4
-        assert :binary.part(data, padding_start, 4) == <<0, 0, 0, 0>>
+        padding_start = byte_size(data) - 8
+        assert :binary.part(data, padding_start, 8) == <<0, 0, 0, 0, 0, 0, 0, 1>>
         assert byte_size(data) <= rgba_pixels
 
         assert Qoix.qoi?(encoded) == true
