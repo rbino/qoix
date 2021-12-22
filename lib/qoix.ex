@@ -18,12 +18,13 @@ defmodule Qoix do
   @doc """
   Returns true if the binary appears to contain a valid QOI image.
   """
-  def qoi?(<<"qoif", _width::32, _height::32, channels::8, colorspace::8, _rest::binary>>)
-      when channels in [3, 4] and colorspace in [0, 1] do
+  @spec qoi?(binary) :: boolean
+  def qoi?(<<"qoif", _width::32, _height::32, channels::8, cspace::8, _rest::binary>> = _binary)
+      when channels in [3, 4] and cspace in [0, 1] do
     true
   end
 
-  def qoi?(_binary) do
+  def qoi?(binary) when is_binary(binary) do
     false
   end
 
@@ -32,6 +33,7 @@ defmodule Qoix do
 
   Returns `{:ok, encoded}` on success, `{:error, reason}` on failure.
   """
+  @spec encode(Qoix.Image.t()) :: {:ok, binary} | {:error, any}
   def encode(%Image{width: w, height: h, pixels: pixels, format: fmt, colorspace: cspace})
       when w > 0 and h > 0 and fmt in [:rgb, :rgba] and cspace in [:srgb, :linear] and
              is_binary(pixels) do
@@ -183,7 +185,8 @@ defmodule Qoix do
 
   Returns `{:ok, %Image{}}` on success, `{:error, reason}` on failure.
   """
-  def decode(<<encoded::binary>>) do
+  @spec decode(binary) :: {:ok, Qoix.Image.t()} | {:error, any}
+  def decode(<<encoded::binary>> = _encoded) do
     case encoded do
       <<"qoif", width::32, height::32, channels::8, cspace::8, chunks::binary>> ->
         format = format(channels)
