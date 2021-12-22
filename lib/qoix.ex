@@ -122,7 +122,7 @@ defmodule Qoix do
     acc
   end
 
-  # All pixels consumed, pending run: output the accumulator and the 5 bit run with its tag
+  # All pixels consumed, pending run: output the accumulator and the 6 bit run with its tag
   defp do_encode(<<>>, _format, _prev, run_length, _lut, acc) do
     [acc | <<@run_op::bits, bias_run(run_length)::6>>]
   end
