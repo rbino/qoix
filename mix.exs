@@ -1,18 +1,20 @@
 defmodule Qoix.MixProject do
   use Mix.Project
 
+  @source_url "https://github.com/rbino/qoix"
+  @version "0.1.0"
+
   def project do
     [
       app: :qoix,
-      version: "0.1.0",
+      name: "Qoix",
+      version: @version,
       elixir: "~> 1.12",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      description: description(),
       package: package(),
       deps: deps(),
-      name: "Qoix",
-      source_url: "https://github.com/rbino/qoix"
+      docs: docs()
     ]
   end
 
@@ -31,18 +33,27 @@ defmodule Qoix.MixProject do
   defp deps do
     [
       {:stream_data, "~> 0.5", only: [:dev, :test]},
-      {:ex_doc, "~> 0.24", only: :dev, runtime: false}
+      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
     ]
   end
 
-  defp description() do
-    "Qoix is an Elixir implementation of the Quite OK Image format."
+  defp package do
+    [
+      description: "Qoix is an Elixir implementation of the Quite OK Image format.",
+      licenses: ["Apache-2.0"],
+      links: %{"GitHub" => @source_url}
+    ]
   end
 
-  defp package() do
+  defp docs do
     [
-      licenses: ["Apache-2.0"],
-      links: %{"GitHub" => "https://github.com/rbino/qoix"}
+      extras: [
+        LICENSE: [title: "License"],
+        "README.md": [title: "Overview"]
+      ],
+      main: "readme",
+      source_url: @source_url,
+      formatters: ["html"]
     ]
   end
 end
